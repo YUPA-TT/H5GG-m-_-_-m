@@ -12,13 +12,11 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # ── 1. リポジトリをチェックアウト ──────────────────────────────
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           submodules: recursive
 
-      # ── 2. apt パッケージのインストール ───────────────────────────
       - name: Install build dependencies
         run: |
           sudo apt-get update -qq
@@ -32,7 +30,6 @@ jobs:
             fakeroot \
             dpkg-dev
 
-      # ── 3. Theos のセットアップ ────────────────────────────────────
       - name: Setup Theos
         env:
           THEOS: /opt/theos
@@ -40,7 +37,6 @@ jobs:
           sudo git clone --recursive https://github.com/theos/theos.git $THEOS
           sudo chmod -R 777 $THEOS
 
-      # ── 4. iOS 13.7 SDK のダウンロード (.tar.xz) ──────────────────
       - name: Download iPhoneOS 13.7 SDK
         env:
           THEOS: /opt/theos
@@ -52,11 +48,8 @@ jobs:
             -O iPhoneOS13.7.sdk.tar.xz
           tar -xJf iPhoneOS13.7.sdk.tar.xz
           rm iPhoneOS13.7.sdk.tar.xz
-          echo "=== SDK list ==="
           ls $THEOS/sdks/
 
-      # ── 5. arm64 クロスコンパイラのラッパーを作成 ─────────────────
-      # libc++ ヘッダを -isystem で明示的に追加するのがポイント
       - name: Setup arm64 cross-compiler toolchain
         env:
           THEOS: /opt/theos
@@ -64,102 +57,63 @@ jobs:
           TOOLCHAIN=$THEOS/toolchain/linux/iphone/bin
           mkdir -p $TOOLCHAIN
 
-          # libc++ ヘッダのパスを取得
-          LIBCXX_INCLUDE=$(clang++ -v 2>&1 | grep -o '"/usr/lib/llvm-[0-9]*/include/c++/v1"' | tr -d '"' || echo "")
-          if [ -z "$LIBCXX_INCLUDE" ]; then
-            LIBCXX_INCLUDE=$(find /usr/lib/llvm-*/include/c++/v1 -maxdepth 0 2>/dev/null | head -1)
+          LIBCXX=$(find /usr/lib/llvm-*/include/c++/v1 -maxdepth 0 2>/dev/null | head -1)
+          if [ -z "$LIBCXX" ]; then
+            LIBCXX=$(find /usr/include/c++/v1 -maxdepth 0 2>/dev/null | head -1)
           fi
-          if [ -z "$LIBCXX_INCLUDE" ]; then
-            LIBCXX_INCLUDE=$(find /usr/include/c++/v1 -maxdepth 0 2>/dev/null | head -1)
-          fi
-          echo "libc++ include: $LIBCXX_INCLUDE"
+          echo "libc++ include: $LIBCXX"
 
-          # clang wrapper (C用)
-          cat > $TOOLCHAIN/clang << WRAPPER
-#!/bin/bash
-exec /usr/bin/clang \
-  --target=arm64-apple-ios11.4 \
-  -isysroot /opt/theos/sdks/iPhoneOS13.7.sdk \
-  "\$@"
-WRAPPER
+          printf '#!/bin/bash\nexec /usr/bin/clang --target=arm64-apple-ios11.4 -isysroot /opt/theos/sdks/iPhoneOS13.7.sdk "$@"\n' \
+            > $TOOLCHAIN/clang
           chmod +x $TOOLCHAIN/clang
 
-          # clang++ wrapper (C++用) — libc++ ヘッダを明示追加
-          cat > $TOOLCHAIN/clang++ << WRAPPER
-#!/bin/bash
-LIBCXX="${LIBCXX_INCLUDE}"
-if [ -n "\$LIBCXX" ]; then
-  EXTRA="-isystem \$LIBCXX"
-else
-  EXTRA=""
-fi
-exec /usr/bin/clang++ \
-  --target=arm64-apple-ios11.4 \
-  -isysroot /opt/theos/sdks/iPhoneOS13.7.sdk \
-  -stdlib=libc++ \
-  \$EXTRA \
-  "\$@"
-WRAPPER
+          printf '#!/bin/bash\nexec /usr/bin/clang++ --target=arm64-apple-ios11.4 -isysroot /opt/theos/sdks/iPhoneOS13.7.sdk -stdlib=libc++ -isystem %s "$@"\n' \
+            "$LIBCXX" > $TOOLCHAIN/clang++
           chmod +x $TOOLCHAIN/clang++
 
-          ln -sf /usr/bin/llvm-ar       $TOOLCHAIN/ar
-          ln -sf /usr/bin/llvm-strip    $TOOLCHAIN/strip
-          ln -sf /usr/bin/llvm-ranlib   $TOOLCHAIN/ranlib || true
-          ln -sf /usr/bin/ld.lld        $TOOLCHAIN/ld     || true
+          ln -sf /usr/bin/llvm-ar     $TOOLCHAIN/ar
+          ln -sf /usr/bin/llvm-strip  $TOOLCHAIN/strip
+          ln -sf /usr/bin/llvm-ranlib $TOOLCHAIN/ranlib || true
+          ln -sf /usr/bin/ld.lld      $TOOLCHAIN/ld     || true
 
-          echo "=== Toolchain ready ==="
-          ls $TOOLCHAIN
+          echo "=== clang wrapper ==="
+          cat $TOOLCHAIN/clang
+          echo "=== clang++ wrapper ==="
+          cat $TOOLCHAIN/clang++
 
-      # ── 6. OpenSSL ヘッダのパス修正 (ldid.cpp 用) ─────────────────
       - name: Fix OpenSSL include path for ldid
         run: |
-          if [ ! -f /usr/local/include/openssl/sha.h ]; then
+          OSSL=$(find /usr/include -name "sha.h" | grep openssl | head -1 | xargs dirname 2>/dev/null)
+          if [ -n "$OSSL" ] && [ ! -f /usr/local/include/openssl/sha.h ]; then
             sudo mkdir -p /usr/local/include/openssl
-            OSSL=$(find /usr/include -name "sha.h" | grep openssl | head -1 | xargs dirname)
-            if [ -n "$OSSL" ]; then
-              sudo ln -sf $OSSL/* /usr/local/include/openssl/ || true
-            fi
+            sudo ln -sf $OSSL/* /usr/local/include/openssl/ || true
           fi
 
-      # ── 7. SDK の module.map → module.modulemap にリネーム ─────────
-      # 新しい Clang は module.map を -Werror 扱いするため全てリネーム
       - name: Fix deprecated module.map in SDK
         env:
           THEOS: /opt/theos
         run: |
           find $THEOS/sdks/iPhoneOS13.7.sdk -name "module.map" | while read f; do
             mv "$f" "$(dirname $f)/module.modulemap"
-            echo "Renamed: $f"
           done
 
-      # ── 8. ビルド ─────────────────────────────────────────────────
-      # H5GG_CFLAGS:
-      #   -Wno-deprecated-non-prototype : lookup2.c の K&R 構文警告を無視
-      #   -fno-modules                  : Clang modules キャッシュ問題を回避
-      # H5GG_CCFLAGS:
-      #   -stdlib=libc++                : cstdio / unordered_map 解決
-      #   -fno-modules                  : 同上
       - name: Build .deb package
         env:
           THEOS: /opt/theos
-        run: |
-          make package \
-            ARCHS=arm64 \
-            TARGET="iphone:13.7:11.4" \
-            THEOS_PLATFORM_DEB_COMPRESSION_TYPE=gzip \
-            DEBUG=0 \
-            STRIP=1 \
-            FINALPACKAGE=1 \
-            "H5GG_CFLAGS=-fobjc-arc -fvisibility=hidden -Wno-deprecated-non-prototype -fno-modules" \
-            "H5GG_CCFLAGS=-fobjc-arc -fvisibility=hidden -std=c++11 -stdlib=libc++ -fno-modules"
+        run: >
+          make package
+          ARCHS=arm64
+          TARGET="iphone:13.7:11.4"
+          THEOS_PLATFORM_DEB_COMPRESSION_TYPE=gzip
+          DEBUG=0
+          STRIP=1
+          FINALPACKAGE=1
+          "H5GG_CFLAGS=-fobjc-arc -fvisibility=hidden -Wno-deprecated-non-prototype -fno-modules"
+          "H5GG_CCFLAGS=-fobjc-arc -fvisibility=hidden -std=c++11 -stdlib=libc++ -fno-modules"
 
-      # ── 9. packages/ 以下を確認 ───────────────────────────────────
       - name: List built packages
-        run: |
-          echo "=== packages/ ==="
-          ls -lh packages/ || echo "(empty)"
+        run: ls -lh packages/ || echo "(empty)"
 
-      # ── 10. .deb をアーティファクトとしてアップロード ─────────────
       - name: Upload .deb artifact
         uses: actions/upload-artifact@v4
         with:
