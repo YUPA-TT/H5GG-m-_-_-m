@@ -76,11 +76,6 @@ jobs:
           ln -sf /usr/bin/llvm-ranlib $TOOLCHAIN/ranlib || true
           ln -sf /usr/bin/ld.lld      $TOOLCHAIN/ld     || true
 
-          echo "=== clang wrapper ==="
-          cat $TOOLCHAIN/clang
-          echo "=== clang++ wrapper ==="
-          cat $TOOLCHAIN/clang++
-
       - name: Fix OpenSSL include path for ldid
         run: |
           OSSL=$(find /usr/include -name "sha.h" | grep openssl | head -1 | xargs dirname 2>/dev/null)
@@ -109,7 +104,7 @@ jobs:
           STRIP=1
           FINALPACKAGE=1
           "H5GG_CFLAGS=-fobjc-arc -fvisibility=hidden -Wno-deprecated-non-prototype -fno-modules"
-          "H5GG_CCFLAGS=-fobjc-arc -fvisibility=hidden -std=c++11 -stdlib=libc++ -fno-modules"
+          "H5GG_CCFLAGS=-fobjc-arc -fvisibility=hidden -std=c++11 -stdlib=libc++ -fno-modules -Wno-vla-cxx-extension -Wno-unused-but-set-variable"
 
       - name: List built packages
         run: ls -lh packages/ || echo "(empty)"
