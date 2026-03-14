@@ -27,7 +27,7 @@ jobs:
             clang llvm lld \
             libssl-dev \
             pkg-config \
-            zip unzip \
+            zip unzip xz-utils \
             fakeroot \
             dpkg-dev
 
@@ -39,7 +39,7 @@ jobs:
           sudo git clone --recursive https://github.com/theos/theos.git $THEOS
           sudo chmod -R 777 $THEOS
 
-      # ── 4. iOS SDK のダウンロード ──────────────────────────────────
+      # ── 4. iOS 13.7 SDK のダウンロード (.tar.xz) ──────────────────
       - name: Download iPhoneOS 13.7 SDK
         env:
           THEOS: /opt/theos
@@ -47,11 +47,11 @@ jobs:
           mkdir -p $THEOS/sdks
           cd $THEOS/sdks
           wget -q \
-            https://github.com/theos/sdks/releases/download/v1.0/iPhoneOS13.7.sdk.zip \
-            -O iPhoneOS13.7.sdk.zip
-          unzip -q iPhoneOS13.7.sdk.zip
-          rm iPhoneOS13.7.sdk.zip
-          echo "SDK list:"
+            https://github.com/theos/sdks/releases/download/master-146e41f/iPhoneOS13.7.sdk.tar.xz \
+            -O iPhoneOS13.7.sdk.tar.xz
+          tar -xJf iPhoneOS13.7.sdk.tar.xz
+          rm iPhoneOS13.7.sdk.tar.xz
+          echo "=== SDK list ==="
           ls $THEOS/sdks/
 
       # ── 5. arm64 クロスコンパイラのラッパーを作成 ─────────────────
