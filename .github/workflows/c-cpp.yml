@@ -91,10 +91,9 @@ jobs:
           echo "Toolchain ready:"
           ls $TOOLCHAIN
 
-      # ── 6. ldid.cpp が必要とする openssl ヘッダのパス修正 ─────────
+      # ── 6. ldid.cpp 用 OpenSSL ヘッダのパス修正 ──────────────────
       - name: Fix OpenSSL include path for ldid
         run: |
-          # Ubuntu では openssl ヘッダがアーキテクチャ別ディレクトリにある場合がある
           if [ ! -f /usr/local/include/openssl/sha.h ]; then
             sudo mkdir -p /usr/local/include/openssl
             OSSL=$(find /usr/include -name "sha.h" | grep openssl | head -1 | xargs dirname)
@@ -103,7 +102,23 @@ jobs:
             fi
           fi
 
-      # ── 7. ビルド ─────────────────────────────────────────────────
+      # ── 7. SDK の module.map を module.modulemap にリネーム ────────
+      # Clang 新バージョンは module.map を -Werror 扱いするため全てリネーム
+      - name: Fix deprecated module.map in SDK
+        env:
+          THEOS: /opt/theos
+        run: |
+          find $THEOS/sdks/iPhoneOS13.7.sdk -name "module.map" | while read f; do
+            dir=$(dirname "$f")
+            mv "$f" "$dir/module.modulemap"
+            echo "Renamed: $f"
+          done
+
+      # ── 8. ビルド ─────────────────────────────────────────────────
+      # 追加フラグ:
+      #   -Wno-deprecated-non-prototype : lookup2.c の K&R 構文警告を無視
+      #   -fno-modules                  : Clang modules キャッシュ問題を回避
+      #   -stdlib=libc++                : ldid.cpp の cstdio など C++ 標準ヘッダを解決
       - name: Build .deb package
         env:
           THEOS: /opt/theos
@@ -114,15 +129,17 @@ jobs:
             THEOS_PLATFORM_DEB_COMPRESSION_TYPE=gzip \
             DEBUG=0 \
             STRIP=1 \
-            FINALPACKAGE=1
+            FINALPACKAGE=1 \
+            "H5GG_CFLAGS=-fobjc-arc -fvisibility=hidden -Wno-deprecated-non-prototype -fno-modules" \
+            "H5GG_CCFLAGS=-fobjc-arc -fvisibility=hidden -std=c++11 -stdlib=libc++ -fno-modules"
 
-      # ── 8. packages/ 以下を確認 ───────────────────────────────────
+      # ── 9. packages/ 以下を確認 ───────────────────────────────────
       - name: List built packages
         run: |
           echo "=== packages/ ==="
           ls -lh packages/ || echo "(empty)"
 
-      # ── 9. .deb をアーティファクトとしてアップロード ──────────────
+      # ── 10. .deb をアーティファクトとしてアップロード ─────────────
       - name: Upload .deb artifact
         uses: actions/upload-artifact@v4
         with:
