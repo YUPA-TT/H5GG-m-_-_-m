@@ -57,24 +57,43 @@ jobs:
           TOOLCHAIN=$THEOS/toolchain/linux/iphone/bin
           mkdir -p $TOOLCHAIN
 
+          # libc++ ヘッダのパスを検出
           LIBCXX=$(find /usr/lib/llvm-*/include/c++/v1 -maxdepth 0 2>/dev/null | head -1)
           if [ -z "$LIBCXX" ]; then
             LIBCXX=$(find /usr/include/c++/v1 -maxdepth 0 2>/dev/null | head -1)
           fi
           echo "libc++ include: $LIBCXX"
 
+          # ld64.lld のパスを検出 (Apple MachO リンカー)
+          LD64=$(which ld64.lld 2>/dev/null || find /usr/bin /usr/lib/llvm-*/bin -name "ld64.lld" 2>/dev/null | head -1)
+          echo "ld64.lld: $LD64"
+
+          # clang wrapper
           printf '#!/bin/bash\nexec /usr/bin/clang --target=arm64-apple-ios11.4 -isysroot /opt/theos/sdks/iPhoneOS13.7.sdk "$@"\n' \
             > $TOOLCHAIN/clang
           chmod +x $TOOLCHAIN/clang
 
-          printf '#!/bin/bash\nexec /usr/bin/clang++ --target=arm64-apple-ios11.4 -isysroot /opt/theos/sdks/iPhoneOS13.7.sdk -stdlib=libc++ -isystem %s "$@"\n' \
+          # clang++ wrapper — -fuse-ld=lld で ld64.lld を強制使用
+          printf '#!/bin/bash\nexec /usr/bin/clang++ --target=arm64-apple-ios11.4 -isysroot /opt/theos/sdks/iPhoneOS13.7.sdk -stdlib=libc++ -isystem %s -fuse-ld=lld "$@"\n' \
             "$LIBCXX" > $TOOLCHAIN/clang++
           chmod +x $TOOLCHAIN/clang++
+
+          # ld → ld64.lld にリンク (MachO arm64 用)
+          if [ -n "$LD64" ]; then
+            ln -sf "$LD64" $TOOLCHAIN/ld
+            echo "ld -> ld64.lld"
+          else
+            # ld64.lld が無い場合は lld を直接使う
+            ln -sf /usr/bin/lld $TOOLCHAIN/ld
+            echo "ld -> lld (fallback)"
+          fi
 
           ln -sf /usr/bin/llvm-ar     $TOOLCHAIN/ar
           ln -sf /usr/bin/llvm-strip  $TOOLCHAIN/strip
           ln -sf /usr/bin/llvm-ranlib $TOOLCHAIN/ranlib || true
-          ln -sf /usr/bin/ld.lld      $TOOLCHAIN/ld     || true
+
+          echo "=== Toolchain ==="
+          ls -la $TOOLCHAIN
 
       - name: Fix OpenSSL include path for ldid
         run: |
